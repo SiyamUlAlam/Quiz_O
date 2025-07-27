@@ -1,8 +1,8 @@
 <?php
-$host = "localhost";
-$user = "root";
-$pass = ""; 
-$db   = "quiz_db"; 
+$host = "quiz-db-server.mysql.database.azure.com";
+$user = "siyam";
+$pass = "Siyam@32"; 
+$db   = "quizdb"; 
 
 // Enable exceptions for mysqli
 mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
