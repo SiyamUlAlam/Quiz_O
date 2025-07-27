@@ -11,15 +11,21 @@ if (!isset($_SESSION['user_id'])) {
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
 
+// Run query and check for errors
 $result = $conn->query("SELECT * FROM quizzes ORDER BY id DESC");
+
+if (!$result) {
+    die("Database query failed: " . $conn->error);
+}
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>User Dashboard</title>
     <style>
+        /* Your existing styles */
         body {
             font-family: 'Segoe UI', sans-serif;
             margin: 0;
@@ -84,15 +90,19 @@ $result = $conn->query("SELECT * FROM quizzes ORDER BY id DESC");
 
 <main>
     <h2>Available Quizzes</h2>
-    <ul>
+    <?php if ($result->num_rows > 0): ?>
+        <ul>
         <?php while ($row = $result->fetch_assoc()): ?>
             <li>
-                <a class="quiz-link" href="quiz.php?id=<?= $row['id'] ?>">
+                <a class="quiz-link" href="quiz.php?id=<?= (int)$row['id'] ?>">
                     <?= htmlspecialchars($row['title']) ?>
                 </a>
             </li>
         <?php endwhile; ?>
-    </ul>
+        </ul>
+    <?php else: ?>
+        <p>No quizzes available at the moment.</p>
+    <?php endif; ?>
 
     <a href="logout.php" class="logout-btn">Logout</a>
 </main>
