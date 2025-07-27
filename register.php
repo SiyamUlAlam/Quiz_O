@@ -1,4 +1,8 @@
 <?php
+// For development - remove in production
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
 require 'config.php';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
@@ -8,13 +12,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
-    $stmt = $conn->prepare("INSERT INTO users (username, email, password) VALUES (?, ?, ?)");
+    // Insert with role as 'user'
+    $stmt = $conn->prepare("INSERT INTO users (username, email, password, role) VALUES (?, ?, ?, 'user')");
     $stmt->bind_param("sss", $username, $email, $hashedPassword);
 
     if ($stmt->execute()) {
         echo "<script>alert('Registration successful!'); window.location='login.php';</script>";
     } else {
-        echo "Error: " . $stmt->error;
+        if ($conn->errno == 1062) {
+            echo "<script>alert('Email already registered!'); window.location='register.php';</script>";
+        } else {
+            echo "Error: " . $stmt->error;
+        }
     }
 
     $stmt->close();
@@ -27,13 +36,51 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <head>
     <title>Register</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #f5f7fa; display: flex; align-items: center; justify-content: center; height: 100vh; }
-        form { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 0 15px rgba(0,0,0,0.1); width: 300px; }
-        h2 { text-align: center; margin-bottom: 20px; }
-        input { width: 100%; padding: 10px; margin: 10px 0; border-radius: 5px; border: 1px solid #ccc; }
-        button { width: 100%; padding: 10px; border: none; background: #3498db; color: white; border-radius: 5px; cursor: pointer; }
-        button:hover { background: #2980b9; }
-        a { text-decoration: none; display: block; text-align: center; margin-top: 15px; color: #555; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f5f7fa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        form {
+            background: #fff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+            width: 300px;
+        }
+        h2 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            background: #3498db;
+            color: white;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #2980b9;
+        }
+        a {
+            text-decoration: none;
+            display: block;
+            text-align: center;
+            margin-top: 15px;
+            color: #555;
+        }
     </style>
 </head>
 <body>
