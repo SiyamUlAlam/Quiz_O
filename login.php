@@ -327,6 +327,7 @@ $conn->close();
             right: 0;
             height: 1px;
             background: #e2e8f0;
+            z-index: 1;
         }
 
         .divider span {
@@ -334,6 +335,8 @@ $conn->close();
             padding: 0 1rem;
             color: #64748b;
             font-size: 0.9rem;
+            position: relative;
+            z-index: 2;
         }
 
         .register-link {
