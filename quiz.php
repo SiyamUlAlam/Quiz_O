@@ -797,7 +797,6 @@ $questions = $stmt->get_result();
         }
 
         .question-card {
-            opacity: 0;
             animation: slideInUp 0.6s ease-out forwards;
         }
 
