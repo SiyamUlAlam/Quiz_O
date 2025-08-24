@@ -9,27 +9,52 @@ $quiz_id = (int) $_GET['id'];
 $user_id = $_SESSION['user_id'];
 // Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $score = 0;
-    foreach ($_POST["answers"] as $question_id => $answer) {
-        // Get correct answer
-        $stmt = $conn->prepare("SELECT correct_answer FROM questions WHERE id = ?");
-        $stmt->bind_param("i", $question_id);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $correct = $result->fetch_assoc()["correct_answer"];
-        $is_correct = ($answer === $correct) ? 1 : 0;
-        $score += $is_correct;
-        // Save user answer
-        $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
-        $stmt->execute();
+    // Debug: Check if answers are being submitted
+    error_log("POST data received: " . print_r($_POST, true));
+    
+    if (isset($_POST["answers"]) && is_array($_POST["answers"]) && !empty($_POST["answers"])) {
+        $score = 0;
+        $total_questions = count($_POST["answers"]);
+        
+        foreach ($_POST["answers"] as $question_id => $answer) {
+            // Validate question_id and answer
+            if (!is_numeric($question_id) || empty($answer)) {
+                continue;
+            }
+            
+            // Get correct answer
+            $stmt = $conn->prepare("SELECT correct_answer FROM questions WHERE id = ? AND quiz_id = ?");
+            $stmt->bind_param("ii", $question_id, $quiz_id);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            if ($result->num_rows > 0) {
+                $row = $result->fetch_assoc();
+                $correct = $row["correct_answer"];
+                $is_correct = ($answer === $correct) ? 1 : 0;
+                $score += $is_correct;
+                
+                // Save user answer
+                $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
+                $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
+                $stmt->execute();
+            }
+        }
+        
+        // Save score
+        $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
+        $stmt->bind_param("iii", $user_id, $quiz_id, $score);
+        
+        if ($stmt->execute()) {
+            header("Location: result.php?quiz_id=$quiz_id");
+            exit();
+        } else {
+            $error_message = "Failed to save quiz results. Please try again.";
+            error_log("Database error: " . $conn->error);
+        }
+    } else {
+        $error_message = "Please answer all questions before submitting the quiz.";
     }
-    // Save score
-    $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
-    $stmt->bind_param("iii", $user_id, $quiz_id, $score);
-    $stmt->execute();
-    header("Location: result.php?quiz_id=$quiz_id");
-    exit();
 }
 // Load questions
 $stmt = $conn->prepare("SELECT * FROM questions WHERE quiz_id = ?");
@@ -605,6 +630,12 @@ $questions = $stmt->get_result();
             </div>
 
             <form method="POST" class="questions-form" id="quizForm">
+                <?php if (isset($error_message)): ?>
+                    <div class="error-message" style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 2rem; text-align: center; font-weight: 600; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
+                        ⚠️ <?= htmlspecialchars($error_message) ?>
+                    </div>
+                <?php endif; ?>
+                
                 <?php 
                 $question_number = 1;
                 $questions->data_seek(0); // Reset pointer
@@ -715,9 +746,119 @@ $questions = $stmt->get_result();
 
         // Form submission with loading state
         document.getElementById('quizForm').addEventListener('submit', function(e) {
+            e.preventDefault(); // Prevent default submission initially
+            
             const submitBtn = document.getElementById('submitBtn');
             const loadingSpinner = document.getElementById('loadingSpinner');
             const btnText = document.getElementById('btnText');
+            
+            // Validate all questions are answered
+            const requiredQuestions = document.querySelectorAll('input[type="radio"][required]');
+            const questionGroups = {};
+            
+            // Group radio buttons by name
+            requiredQuestions.forEach(radio => {
+                const name = radio.name;
+                if (!questionGroups[name]) {
+                    questionGroups[name] = [];
+                }
+                questionGroups[name].push(radio);
+            });
+            
+            // Check if all question groups have at least one selected
+            let allAnswered = true;
+            let unansweredQuestions = [];
+            
+            Object.keys(questionGroups).forEach(groupName => {
+                const isAnswered = questionGroups[groupName].some(radio => radio.checked);
+                if (!isAnswered) {
+                    allAnswered = false;
+                    // Find question number
+                    const questionCard = questionGroups[groupName][0].closest('.question-card');
+                    const questionNum = questionCard.getAttribute('data-question');
+                    unansweredQuestions.push(questionNum);
+                }
+            });
+            
+            if (!allAnswered) {
+                // Remove previous error highlighting
+                document.querySelectorAll('.question-card.error').forEach(card => {
+                    card.classList.remove('error');
+                });
+                
+                // Highlight unanswered questions
+                unansweredQuestions.forEach(questionNum => {
+                    const questionCard = document.querySelector(`[data-question="${questionNum}"]`);
+                    if (questionCard) {
+                        questionCard.classList.add('error');
+                    }
+                });
+                
+                // Show error message with better styling
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.style.cssText = `
+                    background: linear-gradient(135deg, #ef4444, #dc2626);
+                    color: white;
+                    padding: 1rem 1.5rem;
+                    border-radius: 12px;
+                    margin-bottom: 2rem;
+                    text-align: center;
+                    font-weight: 600;
+                    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+                    animation: slideDown 0.5s ease-out;
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    z-index: 1000;
+                    max-width: 90%;
+                `;
+                errorDiv.innerHTML = `⚠️ Please answer all questions before submitting.<br><small>Unanswered questions: ${unansweredQuestions.join(', ')}</small>`;
+                
+                document.body.appendChild(errorDiv);
+                
+                // Remove error message after 5 seconds
+                setTimeout(() => {
+                    if (errorDiv.parentNode) {
+                        errorDiv.remove();
+                    }
+                    // Remove error highlighting
+                    document.querySelectorAll('.question-card.error').forEach(card => {
+                        card.classList.remove('error');
+                    });
+                }, 5000);
+                
+                // Scroll to first unanswered question
+                const firstUnanswered = document.querySelector(`[data-question="${unansweredQuestions[0]}"]`);
+                if (firstUnanswered) {
+                    firstUnanswered.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                return false;
+            }
+            
+            // All questions answered, proceed with submission
+            // Show success confirmation
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-message';
+            successDiv.style.cssText = `
+                background: linear-gradient(135deg, #10b981, #059669);
+                color: white;
+                padding: 1rem 1.5rem;
+                border-radius: 12px;
+                text-align: center;
+                font-weight: 600;
+                box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+                animation: slideDown 0.5s ease-out;
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 1000;
+                max-width: 90%;
+            `;
+            successDiv.innerHTML = `✅ All questions answered! Submitting your quiz...`;
+            document.body.appendChild(successDiv);
             
             // Stop timer
             clearInterval(timerInterval);
@@ -730,6 +871,12 @@ $questions = $stmt->get_result();
             // Add completion animation
             document.querySelector('.quiz-container').style.transform = 'scale(0.98)';
             document.querySelector('.quiz-container').style.opacity = '0.8';
+            
+            // Submit the form after a brief delay to show loading state
+            setTimeout(() => {
+                successDiv.remove();
+                this.submit();
+            }, 2000);
         });
 
         // Animate question cards on scroll
@@ -805,6 +952,38 @@ $questions = $stmt->get_result();
         .question-card:nth-child(3) { animation-delay: 0.3s; }
         .question-card:nth-child(4) { animation-delay: 0.4s; }
         .question-card:nth-child(5) { animation-delay: 0.5s; }
+        
+        /* Error state for questions */
+        .question-card.error {
+            border-color: #ef4444 !important;
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.05), rgba(220, 38, 38, 0.05)) !important;
+            box-shadow: 0 8px 20px rgba(239, 68, 68, 0.15) !important;
+            animation: shake 0.5s ease-in-out;
+        }
+        
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        
+        /* Success message styles */
+        .success-message {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            padding: 1rem 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            text-align: center;
+            font-weight: 600;
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+            animation: slideDown 0.5s ease-out;
+        }
+        
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </body>
 </html>
