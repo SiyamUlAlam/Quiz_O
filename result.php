@@ -1,14 +1,12 @@
 <?php
 require 'config.php';
-session_start();
-// Redirect if not logged in
-if (!isset($_SESSION['user_id'])) {
-    header("Location: login.php");
-    exit();
-}
+require 'auth.php';
+redirectIfNotLoggedIn();
+
 $user_id = $_SESSION['user_id'];
 $username = $_SESSION['username'];
 $quiz_id = $_GET['quiz_id'] ?? 0;
+
 if (!$quiz_id || !is_numeric($quiz_id)) {
     echo "Invalid quiz ID.";
     exit();
