@@ -11,14 +11,20 @@ $user_id = $_SESSION['user_id'];
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Debug: Check if answers are being submitted
     error_log("POST data received: " . print_r($_POST, true));
+    error_log("Request method: " . $_SERVER["REQUEST_METHOD"]);
+    error_log("Content type: " . ($_SERVER['CONTENT_TYPE'] ?? 'Not set'));
     
     if (isset($_POST["answers"]) && is_array($_POST["answers"]) && !empty($_POST["answers"])) {
+        error_log("Answers found: " . count($_POST["answers"]) . " questions answered");
+        
         $score = 0;
         $total_questions = count($_POST["answers"]);
+        $processed_questions = 0;
         
         foreach ($_POST["answers"] as $question_id => $answer) {
             // Validate question_id and answer
             if (!is_numeric($question_id) || empty($answer)) {
+                error_log("Skipping invalid question: ID=$question_id, Answer=$answer");
                 continue;
             }
             
@@ -33,27 +39,69 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 $correct = $row["correct_answer"];
                 $is_correct = ($answer === $correct) ? 1 : 0;
                 $score += $is_correct;
+                $processed_questions++;
+                
+                error_log("Question $question_id: Answer='$answer', Correct='$correct', IsCorrect=$is_correct");
                 
                 // Save user answer
                 $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
                 $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
-                $stmt->execute();
+                if (!$stmt->execute()) {
+                    error_log("Failed to save user answer for question $question_id: " . $conn->error);
+                }
+            } else {
+                error_log("No question found with ID $question_id for quiz $quiz_id");
             }
         }
         
-        // Save score
-        $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
-        $stmt->bind_param("iii", $user_id, $quiz_id, $score);
+        error_log("Final score: $score out of $processed_questions questions");
+        
+        // Save score (check for existing score first to avoid duplicates)
+        $check_stmt = $conn->prepare("SELECT id FROM scores WHERE user_id = ? AND quiz_id = ?");
+        $check_stmt->bind_param("ii", $user_id, $quiz_id);
+        $check_stmt->execute();
+        $existing = $check_stmt->get_result();
+        
+        if ($existing->num_rows > 0) {
+            // Update existing score
+            $stmt = $conn->prepare("UPDATE scores SET score = ?, created_at = NOW() WHERE user_id = ? AND quiz_id = ?");
+            $stmt->bind_param("iii", $score, $user_id, $quiz_id);
+            error_log("Updating existing score for user $user_id, quiz $quiz_id");
+        } else {
+            // Insert new score
+            $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
+            $stmt->bind_param("iii", $user_id, $quiz_id, $score);
+            error_log("Inserting new score for user $user_id, quiz $quiz_id");
+        }
         
         if ($stmt->execute()) {
-            header("Location: result.php?quiz_id=$quiz_id");
-            exit();
+            error_log("Score saved successfully");
+            
+            // Simple relative redirect - should work if files are in same directory
+            $redirect_url = "result.php?quiz_id=" . urlencode($quiz_id);
+            
+            // Add debugging
+            error_log("Quiz submission successful. Redirecting to: " . $redirect_url);
+            error_log("Quiz ID: " . $quiz_id . ", User ID: " . $user_id . ", Score: " . $score);
+            
+            // Ensure no output before header
+            if (!headers_sent()) {
+                header("Location: " . $redirect_url);
+                exit();
+            } else {
+                // Fallback if headers already sent
+                echo "<script>window.location.href = '$redirect_url';</script>";
+                echo "<noscript><meta http-equiv='refresh' content='0;url=$redirect_url'></noscript>";
+                exit();
+            }
         } else {
             $error_message = "Failed to save quiz results. Please try again.";
-            error_log("Database error: " . $conn->error);
+            error_log("Database error saving score: " . $conn->error);
         }
     } else {
         $error_message = "Please answer all questions before submitting the quiz.";
+        error_log("No answers received or answers array is empty");
+        error_log("POST keys: " . implode(', ', array_keys($_POST)));
     }
 }
 // Load questions
@@ -629,10 +677,23 @@ $questions = $stmt->get_result();
                 <div class="timer-display" id="timer">⏱️ 00:00</div>
             </div>
 
-            <form method="POST" class="questions-form" id="quizForm">
+            <form method="POST" class="questions-form" id="quizForm" action="<?= htmlspecialchars($_SERVER['PHP_SELF']) ?>?id=<?= $quiz_id ?>">
                 <?php if (isset($error_message)): ?>
                     <div class="error-message" style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 2rem; text-align: center; font-weight: 600; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
                         ⚠️ <?= htmlspecialchars($error_message) ?>
+                    </div>
+                <?php endif; ?>
+                
+                <!-- Debug info (remove in production) -->
+                <?php if (isset($_GET['debug']) && $_GET['debug'] == '1'): ?>
+                    <div style="background: #f3f4f6; padding: 1rem; border-radius: 8px; margin-bottom: 1rem; font-family: monospace; font-size: 0.8rem;">
+                        <strong>Debug Info:</strong><br>
+                        Quiz ID: <?= $quiz_id ?><br>
+                        User ID: <?= $user_id ?><br>
+                        Request Method: <?= $_SERVER['REQUEST_METHOD'] ?><br>
+                        POST Data: <?= !empty($_POST) ? 'Present' : 'None' ?><br>
+                        Questions Count: <?= $questions->num_rows ?><br>
+                        Current URL: <?= $_SERVER['REQUEST_URI'] ?>
                     </div>
                 <?php endif; ?>
                 
