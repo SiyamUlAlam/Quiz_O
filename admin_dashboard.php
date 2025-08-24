@@ -1,48 +1,87 @@
 <?php
-require 'config.php';
-require 'auth.php';
-redirectIfNotAdmin();
-
-// Get admin statistics
-$admin_id = $_SESSION['user_id'];
-$username = $_SESSION['username'];
+// Enhanced error handling for admin dashboard
+try {
+    require 'config.php';
+    require 'auth.php';
+    
+    // Start session if not already started
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    
+    // Check admin access with better error reporting
+    if (!isset($_SESSION['user_id'])) {
+        header("Location: login.php?error=not_logged_in");
+        exit();
+    }
+    
+    if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+        header("Location: login.php?error=not_admin");
+        exit();
+    }
+    
+    // Get admin statistics
+    $admin_id = $_SESSION['user_id'];
+    $username = $_SESSION['username'];
+    
+} catch (Exception $e) {
+    die("Error loading admin dashboard: " . $e->getMessage());
+}
 
 // Count total quizzes created by admin
-$quiz_count_result = $conn->query("SELECT COUNT(*) as total_quizzes FROM quizzes WHERE created_by = $admin_id");
+$quiz_count_stmt = $conn->prepare("SELECT COUNT(*) as total_quizzes FROM quizzes WHERE created_by = ?");
+$quiz_count_stmt->bind_param("i", $admin_id);
+$quiz_count_stmt->execute();
+$quiz_count_result = $quiz_count_stmt->get_result();
 $total_quizzes = $quiz_count_result->fetch_assoc()['total_quizzes'];
+$quiz_count_stmt->close();
 
 // Count total questions across all admin's quizzes
-$question_count_result = $conn->query("
+$question_count_stmt = $conn->prepare("
     SELECT COUNT(*) as total_questions 
     FROM questions q 
     JOIN quizzes qz ON q.quiz_id = qz.id 
-    WHERE qz.created_by = $admin_id
+    WHERE qz.created_by = ?
 ");
+$question_count_stmt->bind_param("i", $admin_id);
+$question_count_stmt->execute();
+$question_count_result = $question_count_stmt->get_result();
 $total_questions = $question_count_result->fetch_assoc()['total_questions'];
+$question_count_stmt->close();
 
 // Count total attempts on admin's quizzes
-$attempt_count_result = $conn->query("
+$attempt_count_stmt = $conn->prepare("
     SELECT COUNT(*) as total_attempts 
     FROM scores s 
     JOIN quizzes qz ON s.quiz_id = qz.id 
-    WHERE qz.created_by = $admin_id
+    WHERE qz.created_by = ?
 ");
+$attempt_count_stmt->bind_param("i", $admin_id);
+$attempt_count_stmt->execute();
+$attempt_count_result = $attempt_count_stmt->get_result();
 $total_attempts = $attempt_count_result->fetch_assoc()['total_attempts'];
+$attempt_count_stmt->close();
 
 // Get recent quiz attempts
-$recent_attempts = $conn->query("
+$recent_attempts_stmt = $conn->prepare("
     SELECT u.username, qz.title, s.score, s.submitted_at,
            (SELECT COUNT(*) FROM questions WHERE quiz_id = qz.id) as total_questions
     FROM scores s 
     JOIN users u ON s.user_id = u.id 
     JOIN quizzes qz ON s.quiz_id = qz.id 
-    WHERE qz.created_by = $admin_id 
+    WHERE qz.created_by = ? 
     ORDER BY s.submitted_at DESC 
     LIMIT 5
 ");
+$recent_attempts_stmt->bind_param("i", $admin_id);
+$recent_attempts_stmt->execute();
+$recent_attempts = $recent_attempts_stmt->get_result();
 
 // Get admin's quizzes
-$result = $conn->query("SELECT * FROM quizzes WHERE created_by = $admin_id ORDER BY created_at DESC");
+$quizzes_stmt = $conn->prepare("SELECT * FROM quizzes WHERE created_by = ? ORDER BY created_at DESC");
+$quizzes_stmt->bind_param("i", $admin_id);
+$quizzes_stmt->execute();
+$result = $quizzes_stmt->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="en">

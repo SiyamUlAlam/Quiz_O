@@ -9,10 +9,14 @@ $success_message = "";
 // Get quiz title for better context
 $quiz_title = "";
 if ($quiz_id) {
-    $quiz_result = $conn->query("SELECT title FROM quizzes WHERE id = $quiz_id");
+    $quiz_stmt = $conn->prepare("SELECT title FROM quizzes WHERE id = ?");
+    $quiz_stmt->bind_param("i", $quiz_id);
+    $quiz_stmt->execute();
+    $quiz_result = $quiz_stmt->get_result();
     if ($quiz_result && $quiz_result->num_rows > 0) {
         $quiz_title = $quiz_result->fetch_assoc()['title'];
     }
+    $quiz_stmt->close();
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
