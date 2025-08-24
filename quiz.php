@@ -11,49 +11,79 @@ $user_id = $_SESSION['user_id'];
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     // Debug: Check if answers are being submitted
     error_log("POST data received: " . print_r($_POST, true));
+    error_log("Quiz ID: $quiz_id, User ID: $user_id");
     
     if (isset($_POST["answers"]) && is_array($_POST["answers"]) && !empty($_POST["answers"])) {
         $score = 0;
         $total_questions = count($_POST["answers"]);
         
-        foreach ($_POST["answers"] as $question_id => $answer) {
-            // Validate question_id and answer
-            if (!is_numeric($question_id) || empty($answer)) {
-                continue;
-            }
-            
-            // Get correct answer
-            $stmt = $conn->prepare("SELECT correct_answer FROM questions WHERE id = ? AND quiz_id = ?");
-            $stmt->bind_param("ii", $question_id, $quiz_id);
-            $stmt->execute();
-            $result = $stmt->get_result();
-            
-            if ($result->num_rows > 0) {
-                $row = $result->fetch_assoc();
-                $correct = $row["correct_answer"];
-                $is_correct = ($answer === $correct) ? 1 : 0;
-                $score += $is_correct;
-                
-                // Save user answer
-                $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
-                $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
-                $stmt->execute();
-            }
-        }
+        // Check if user has already taken this quiz
+        $check_stmt = $conn->prepare("SELECT id FROM scores WHERE user_id = ? AND quiz_id = ?");
+        $check_stmt->bind_param("ii", $user_id, $quiz_id);
+        $check_stmt->execute();
+        $existing_score = $check_stmt->get_result();
         
-        // Save score
-        $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
-        $stmt->bind_param("iii", $user_id, $quiz_id, $score);
-        
-        if ($stmt->execute()) {
-            header("Location: result.php?quiz_id=$quiz_id");
-            exit();
+        if ($existing_score->num_rows > 0) {
+            error_log("User $user_id already took quiz $quiz_id");
+            $error_message = "You have already taken this quiz.";
         } else {
-            $error_message = "Failed to save quiz results. Please try again.";
-            error_log("Database error: " . $conn->error);
+            // Clear any existing user answers for this quiz (in case of retry)
+            $clear_stmt = $conn->prepare("DELETE FROM user_answers WHERE user_id = ? AND question_id IN (SELECT id FROM questions WHERE quiz_id = ?)");
+            $clear_stmt->bind_param("ii", $user_id, $quiz_id);
+            $clear_stmt->execute();
+            
+            foreach ($_POST["answers"] as $question_id => $answer) {
+                // Validate question_id and answer
+                if (!is_numeric($question_id) || empty($answer)) {
+                    error_log("Invalid question_id ($question_id) or answer ($answer)");
+                    continue;
+                }
+                
+                // Get correct answer
+                $stmt = $conn->prepare("SELECT correct_answer FROM questions WHERE id = ? AND quiz_id = ?");
+                $stmt->bind_param("ii", $question_id, $quiz_id);
+                $stmt->execute();
+                $result = $stmt->get_result();
+                
+                if ($result->num_rows > 0) {
+                    $row = $result->fetch_assoc();
+                    $correct = $row["correct_answer"];
+                    $is_correct = ($answer === $correct) ? 1 : 0;
+                    $score += $is_correct;
+                    
+                    error_log("Question $question_id: Answer '$answer', Correct '$correct', Is Correct: $is_correct");
+                    
+                    // Save user answer
+                    $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
+                    $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
+                    if (!$stmt->execute()) {
+                        error_log("Failed to save answer for question $question_id: " . $conn->error);
+                    }
+                } else {
+                    error_log("Question $question_id not found for quiz $quiz_id");
+                }
+            }
+            
+            // Save score
+            $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
+            $stmt->bind_param("iii", $user_id, $quiz_id, $score);
+            
+            if ($stmt->execute()) {
+                // Debug: Log successful redirect
+                error_log("Quiz submitted successfully. Score: $score/$total_questions. Redirecting to result.php?quiz_id=$quiz_id");
+                
+                // Use absolute redirect to ensure it works
+                $redirect_url = "result.php?quiz_id=$quiz_id";
+                header("Location: $redirect_url");
+                exit();
+            } else {
+                $error_message = "Failed to save quiz results. Please try again.";
+                error_log("Database error saving score: " . $conn->error);
+            }
         }
     } else {
         $error_message = "Please answer all questions before submitting the quiz.";
+        error_log("No answers received in POST data");
     }
 }
 // Load questions
@@ -629,7 +659,11 @@ $questions = $stmt->get_result();
                 <div class="timer-display" id="timer">⏱️ 00:00</div>
             </div>
 
-            <form method="POST" class="questions-form" id="quizForm">
+            <form method="POST" class="questions-form" id="quizForm" action="">
+                <!-- Hidden field to help debug form submission -->
+                <input type="hidden" name="form_submitted" value="1">
+                <input type="hidden" name="quiz_id" value="<?= $quiz_id ?>">
+                
                 <?php if (isset($error_message)): ?>
                     <div class="error-message" style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 2rem; text-align: center; font-weight: 600; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
                         ⚠️ <?= htmlspecialchars($error_message) ?>
@@ -670,6 +704,12 @@ $questions = $stmt->get_result();
                         <span class="loading-spinner" id="loadingSpinner"></span>
                         <span id="btnText">🚀 Submit Quiz</span>
                     </button>
+                    
+                    <noscript>
+                        <div style="margin-top: 1rem; padding: 1rem; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; color: #92400e;">
+                            <strong>JavaScript is disabled.</strong> The form will still work, but without interactive features.
+                        </div>
+                    </noscript>
                 </div>
             </form>
         </div>
@@ -746,8 +786,6 @@ $questions = $stmt->get_result();
 
         // Form submission with loading state
         document.getElementById('quizForm').addEventListener('submit', function(e) {
-            e.preventDefault(); // Prevent default submission initially
-            
             const submitBtn = document.getElementById('submitBtn');
             const loadingSpinner = document.getElementById('loadingSpinner');
             const btnText = document.getElementById('btnText');
@@ -781,6 +819,8 @@ $questions = $stmt->get_result();
             });
             
             if (!allAnswered) {
+                e.preventDefault(); // Only prevent if validation fails
+                
                 // Remove previous error highlighting
                 document.querySelectorAll('.question-card.error').forEach(card => {
                     card.classList.remove('error');
@@ -838,6 +878,14 @@ $questions = $stmt->get_result();
             }
             
             // All questions answered, proceed with submission
+            // Show loading state immediately
+            submitBtn.disabled = true;
+            loadingSpinner.style.display = 'inline-block';
+            btnText.textContent = '📊 Calculating Results...';
+            
+            // Stop timer
+            clearInterval(timerInterval);
+            
             // Show success confirmation
             const successDiv = document.createElement('div');
             successDiv.className = 'success-message';
@@ -860,23 +908,18 @@ $questions = $stmt->get_result();
             successDiv.innerHTML = `✅ All questions answered! Submitting your quiz...`;
             document.body.appendChild(successDiv);
             
-            // Stop timer
-            clearInterval(timerInterval);
-            
-            // Show loading state
-            submitBtn.disabled = true;
-            loadingSpinner.style.display = 'inline-block';
-            btnText.textContent = '📊 Calculating Results...';
-            
             // Add completion animation
             document.querySelector('.quiz-container').style.transform = 'scale(0.98)';
             document.querySelector('.quiz-container').style.opacity = '0.8';
             
-            // Submit the form after a brief delay to show loading state
+            // Remove success message after a short delay
             setTimeout(() => {
-                successDiv.remove();
-                this.submit();
+                if (successDiv.parentNode) {
+                    successDiv.remove();
+                }
             }, 2000);
+            
+            // Form will submit normally since we didn't prevent it
         });
 
         // Animate question cards on scroll
