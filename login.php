@@ -1,43 +1,34 @@
 <?php
 require 'config.php';
 session_start();
-
 $error = "";
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $email = trim($_POST["email"]);
     $password = $_POST["password"];
-    
-    try {
-        $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE email = ?");
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $stmt->store_result();
-        
-        if ($stmt->num_rows === 1) {
-            $stmt->bind_result($id, $username, $hashedPassword, $role);
-            $stmt->fetch();
-            
-            if (password_verify($password, $hashedPassword)) {
-                $_SESSION['user_id'] = $id;
-                $_SESSION['username'] = $username;
-                $_SESSION['role'] = $role;
-                
-                if ($role === 'admin') {
-                    header("Location: admin_dashboard.php");
-                } else {
-                    header("Location: user_dashboard.php");
-                }
-                exit;
+    $stmt = $conn->prepare("SELECT id, username, password, role FROM users WHERE email = ?");
+    $stmt->bind_param("s", $email);
+    $stmt->execute();
+    $stmt->store_result();
+    if ($stmt->num_rows === 1) {
+        $stmt->bind_result($id, $username, $hashedPassword, $role);
+        $stmt->fetch();
+        if (password_verify($password, $hashedPassword)) {
+            $_SESSION['user_id'] = $id;
+            $_SESSION['username'] = $username;
+            $_SESSION['role'] = $role;
+            if ($role === 'admin') {
+                header("Location: admin_dashboard.php");
             } else {
-                $error = "Incorrect password.";
+                header("Location: user_dashboard.php");
             }
+            exit;
         } else {
-            $error = "No user found with that email.";
+            $error = "Incorrect password.";
         }
-        $stmt->close();
-    } catch (Exception $e) {
-        $error = "Login error: " . $e->getMessage();
+    } else {
+        $error = "No user found with that email.";
     }
+    $stmt->close();
 }
 $conn->close();
 ?>
