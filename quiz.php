@@ -9,21 +9,11 @@ $quiz_id = (int) $_GET['id'];
 $user_id = $_SESSION['user_id'];
 // Handle form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    // Debug: Log all server info
-    error_log("=== QUIZ SUBMISSION DEBUG ===");
-    error_log("REQUEST_METHOD: " . $_SERVER["REQUEST_METHOD"]);
-    error_log("POST data: " . print_r($_POST, true));
+    // Debug: Check if answers are being submitted
+    error_log("POST data received: " . print_r($_POST, true));
     error_log("Quiz ID: $quiz_id, User ID: $user_id");
-    error_log("Headers: " . print_r(getallheaders(), true));
-    
-    // Check if this is a valid POST request
-    if (!isset($_POST["form_submitted"])) {
-        error_log("ERROR: form_submitted field missing from POST data");
-    }
     
     if (isset($_POST["answers"]) && is_array($_POST["answers"]) && !empty($_POST["answers"])) {
-        error_log("Answers received: " . count($_POST["answers"]) . " questions");
-        
         $score = 0;
         $total_questions = count($_POST["answers"]);
         
@@ -34,21 +24,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $existing_score = $check_stmt->get_result();
         
         if ($existing_score->num_rows > 0) {
-            error_log("BLOCKING: User $user_id already took quiz $quiz_id");
-            $error_message = "You have already taken this quiz. <a href='result.php?quiz_id=$quiz_id'>View your results</a>";
+            error_log("User $user_id already took quiz $quiz_id");
+            $error_message = "You have already taken this quiz.";
         } else {
-            error_log("Processing quiz submission for new attempt");
-            
             // Clear any existing user answers for this quiz (in case of retry)
             $clear_stmt = $conn->prepare("DELETE FROM user_answers WHERE user_id = ? AND question_id IN (SELECT id FROM questions WHERE quiz_id = ?)");
             $clear_stmt->bind_param("ii", $user_id, $quiz_id);
             $clear_stmt->execute();
-            error_log("Cleared existing answers");
             
             foreach ($_POST["answers"] as $question_id => $answer) {
                 // Validate question_id and answer
                 if (!is_numeric($question_id) || empty($answer)) {
-                    error_log("SKIP: Invalid question_id ($question_id) or answer ($answer)");
+                    error_log("Invalid question_id ($question_id) or answer ($answer)");
                     continue;
                 }
                 
@@ -64,43 +51,40 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     $is_correct = ($answer === $correct) ? 1 : 0;
                     $score += $is_correct;
                     
-                    error_log("Q$question_id: '$answer' vs '$correct' = " . ($is_correct ? 'CORRECT' : 'WRONG'));
+                    error_log("Question $question_id: Answer '$answer', Correct '$correct', Is Correct: $is_correct");
                     
                     // Save user answer
                     $stmt = $conn->prepare("INSERT INTO user_answers (user_id, question_id, selected_option, is_correct) VALUES (?, ?, ?, ?)");
                     $stmt->bind_param("iisi", $user_id, $question_id, $answer, $is_correct);
                     if (!$stmt->execute()) {
-                        error_log("ERROR saving answer for Q$question_id: " . $conn->error);
+                        error_log("Failed to save answer for question $question_id: " . $conn->error);
                     }
                 } else {
-                    error_log("ERROR: Question $question_id not found for quiz $quiz_id");
+                    error_log("Question $question_id not found for quiz $quiz_id");
                 }
             }
-            
-            error_log("Final score calculation: $score out of $total_questions");
             
             // Save score
             $stmt = $conn->prepare("INSERT INTO scores (user_id, quiz_id, score) VALUES (?, ?, ?)");
             $stmt->bind_param("iii", $user_id, $quiz_id, $score);
             
             if ($stmt->execute()) {
-                error_log("SUCCESS: Score saved successfully");
-                error_log("REDIRECT: Attempting redirect to result.php?quiz_id=$quiz_id");
+                // Debug: Log successful redirect
+                error_log("Quiz submitted successfully. Score: $score/$total_questions. Redirecting to result.php?quiz_id=$quiz_id");
                 
-                // Force redirect and exit immediately
-                header("Location: result.php?quiz_id=$quiz_id", true, 302);
+                // Use absolute redirect to ensure it works
+                $redirect_url = "result.php?quiz_id=$quiz_id";
+                header("Location: $redirect_url");
                 exit();
             } else {
-                $error_message = "Database error: Failed to save quiz results. " . $conn->error;
-                error_log("ERROR saving score: " . $conn->error);
+                $error_message = "Failed to save quiz results. Please try again.";
+                error_log("Database error saving score: " . $conn->error);
             }
         }
     } else {
         $error_message = "Please answer all questions before submitting the quiz.";
-        error_log("ERROR: No answers received - POST answers field missing or empty");
-        error_log("POST keys: " . implode(', ', array_keys($_POST)));
+        error_log("No answers received in POST data");
     }
-    error_log("=== END QUIZ SUBMISSION DEBUG ===");
 }
 // Load questions
 $stmt = $conn->prepare("SELECT * FROM questions WHERE quiz_id = ?");
@@ -675,15 +659,10 @@ $questions = $stmt->get_result();
                 <div class="timer-display" id="timer">⏱️ 00:00</div>
             </div>
 
-            <form method="POST" class="questions-form" id="quizForm" action="" onsubmit="console.log('Form onsubmit triggered'); return true;">
+            <form method="POST" class="questions-form" id="quizForm" action="">
                 <!-- Hidden field to help debug form submission -->
                 <input type="hidden" name="form_submitted" value="1">
                 <input type="hidden" name="quiz_id" value="<?= $quiz_id ?>">
-                
-                <!-- Debug info -->
-                <div style="background: #e3f2fd; padding: 10px; margin: 10px 0; border-radius: 5px; font-size: 12px;">
-                    <strong>Debug Info:</strong> Quiz ID: <?= $quiz_id ?>, User ID: <?= $user_id ?>, Questions: <?= $questions->num_rows ?>
-                </div>>
                 
                 <?php if (isset($error_message)): ?>
                     <div class="error-message" style="background: linear-gradient(135deg, #ef4444, #dc2626); color: white; padding: 1rem 1.5rem; border-radius: 12px; margin-bottom: 2rem; text-align: center; font-weight: 600; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
@@ -725,14 +704,6 @@ $questions = $stmt->get_result();
                         <span class="loading-spinner" id="loadingSpinner"></span>
                         <span id="btnText">🚀 Submit Quiz</span>
                     </button>
-                    
-                    <!-- Simple fallback button for debugging -->
-                    <div style="margin-top: 20px;">
-                        <button type="submit" style="background: #dc3545; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer;" onclick="document.getElementById('quizForm').removeEventListener('submit', arguments.callee); return true;">
-                            🔧 Direct Submit (Debug)
-                        </button>
-                        <p style="font-size: 12px; color: #666; margin-top: 5px;">Use this button if the main submit isn't working</p>
-                    </div>
                     
                     <noscript>
                         <div style="margin-top: 1rem; padding: 1rem; background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; color: #92400e;">
@@ -815,51 +786,140 @@ $questions = $stmt->get_result();
 
         // Form submission with loading state
         document.getElementById('quizForm').addEventListener('submit', function(e) {
-            console.log('Form submit event triggered');
-            
             const submitBtn = document.getElementById('submitBtn');
             const loadingSpinner = document.getElementById('loadingSpinner');
             const btnText = document.getElementById('btnText');
             
-            // Simple validation - check if at least one radio button per question is selected
-            const allRadioGroups = {};
-            const radios = document.querySelectorAll('input[type="radio"]');
+            // Validate all questions are answered
+            const requiredQuestions = document.querySelectorAll('input[type="radio"][required]');
+            const questionGroups = {};
             
-            // Group radios by name
-            radios.forEach(radio => {
+            // Group radio buttons by name
+            requiredQuestions.forEach(radio => {
                 const name = radio.name;
-                if (!allRadioGroups[name]) {
-                    allRadioGroups[name] = { hasChecked: false, radios: [] };
+                if (!questionGroups[name]) {
+                    questionGroups[name] = [];
                 }
-                allRadioGroups[name].radios.push(radio);
-                if (radio.checked) {
-                    allRadioGroups[name].hasChecked = true;
+                questionGroups[name].push(radio);
+            });
+            
+            // Check if all question groups have at least one selected
+            let allAnswered = true;
+            let unansweredQuestions = [];
+            
+            Object.keys(questionGroups).forEach(groupName => {
+                const isAnswered = questionGroups[groupName].some(radio => radio.checked);
+                if (!isAnswered) {
+                    allAnswered = false;
+                    // Find question number
+                    const questionCard = questionGroups[groupName][0].closest('.question-card');
+                    const questionNum = questionCard.getAttribute('data-question');
+                    unansweredQuestions.push(questionNum);
                 }
             });
             
-            // Check if all groups have at least one checked
-            const uncheckedGroups = Object.keys(allRadioGroups).filter(name => !allRadioGroups[name].hasChecked);
-            
-            if (uncheckedGroups.length > 0) {
-                e.preventDefault();
-                alert(`Please answer all questions. Missing: ${uncheckedGroups.length} questions`);
-                console.log('Form submission prevented - missing answers');
+            if (!allAnswered) {
+                e.preventDefault(); // Only prevent if validation fails
+                
+                // Remove previous error highlighting
+                document.querySelectorAll('.question-card.error').forEach(card => {
+                    card.classList.remove('error');
+                });
+                
+                // Highlight unanswered questions
+                unansweredQuestions.forEach(questionNum => {
+                    const questionCard = document.querySelector(`[data-question="${questionNum}"]`);
+                    if (questionCard) {
+                        questionCard.classList.add('error');
+                    }
+                });
+                
+                // Show error message with better styling
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-message';
+                errorDiv.style.cssText = `
+                    background: linear-gradient(135deg, #ef4444, #dc2626);
+                    color: white;
+                    padding: 1rem 1.5rem;
+                    border-radius: 12px;
+                    margin-bottom: 2rem;
+                    text-align: center;
+                    font-weight: 600;
+                    box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);
+                    animation: slideDown 0.5s ease-out;
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    z-index: 1000;
+                    max-width: 90%;
+                `;
+                errorDiv.innerHTML = `⚠️ Please answer all questions before submitting.<br><small>Unanswered questions: ${unansweredQuestions.join(', ')}</small>`;
+                
+                document.body.appendChild(errorDiv);
+                
+                // Remove error message after 5 seconds
+                setTimeout(() => {
+                    if (errorDiv.parentNode) {
+                        errorDiv.remove();
+                    }
+                    // Remove error highlighting
+                    document.querySelectorAll('.question-card.error').forEach(card => {
+                        card.classList.remove('error');
+                    });
+                }, 5000);
+                
+                // Scroll to first unanswered question
+                const firstUnanswered = document.querySelector(`[data-question="${unansweredQuestions[0]}"]`);
+                if (firstUnanswered) {
+                    firstUnanswered.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
                 return false;
             }
             
-            // All good, show loading state
-            console.log('All questions answered, submitting form...');
+            // All questions answered, proceed with submission
+            // Show loading state immediately
             submitBtn.disabled = true;
             loadingSpinner.style.display = 'inline-block';
             btnText.textContent = '📊 Calculating Results...';
             
             // Stop timer
-            if (typeof timerInterval !== 'undefined') {
-                clearInterval(timerInterval);
-            }
+            clearInterval(timerInterval);
             
-            // Let the form submit naturally
-            console.log('Form will submit now');
+            // Show success confirmation
+            const successDiv = document.createElement('div');
+            successDiv.className = 'success-message';
+            successDiv.style.cssText = `
+                background: linear-gradient(135deg, #10b981, #059669);
+                color: white;
+                padding: 1rem 1.5rem;
+                border-radius: 12px;
+                text-align: center;
+                font-weight: 600;
+                box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+                animation: slideDown 0.5s ease-out;
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                z-index: 1000;
+                max-width: 90%;
+            `;
+            successDiv.innerHTML = `✅ All questions answered! Submitting your quiz...`;
+            document.body.appendChild(successDiv);
+            
+            // Add completion animation
+            document.querySelector('.quiz-container').style.transform = 'scale(0.98)';
+            document.querySelector('.quiz-container').style.opacity = '0.8';
+            
+            // Remove success message after a short delay
+            setTimeout(() => {
+                if (successDiv.parentNode) {
+                    successDiv.remove();
+                }
+            }, 2000);
+            
+            // Form will submit normally since we didn't prevent it
         });
 
         // Animate question cards on scroll
