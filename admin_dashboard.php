@@ -1,11 +1,32 @@
 <?php
-require 'config.php';
-require 'auth.php';
-redirectIfNotAdmin();
-
-// Get admin statistics
-$admin_id = $_SESSION['user_id'];
-$username = $_SESSION['username'];
+// Enhanced error handling for admin dashboard
+try {
+    require 'config.php';
+    require 'auth.php';
+    
+    // Start session if not already started
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
+    
+    // Check admin access with better error reporting
+    if (!isset($_SESSION['user_id'])) {
+        header("Location: login.php?error=not_logged_in");
+        exit();
+    }
+    
+    if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+        header("Location: login.php?error=not_admin");
+        exit();
+    }
+    
+    // Get admin statistics
+    $admin_id = $_SESSION['user_id'];
+    $username = $_SESSION['username'];
+    
+} catch (Exception $e) {
+    die("Error loading admin dashboard: " . $e->getMessage());
+}
 
 // Count total quizzes created by admin
 $quiz_count_result = $conn->query("SELECT COUNT(*) as total_quizzes FROM quizzes WHERE created_by = $admin_id");
